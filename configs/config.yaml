@@ -16,7 +16,9 @@ layout:   {model: "juliozhao/DocLayout-YOLO-DocStructBench", score_thr: 0.4,
 # Stage 3 — OCR. Nougat is the reproduced published method (Blecher et al., 2023),
 # run through HF transformers rather than the unmaintained nougat-ocr package.
 ocr:      {model: "facebook/nougat-base", finetune: false, max_new_tokens: 3584,
-           batch_size: 1, repetition_guard: true}
+           batch_size: auto, repetition_guard: true, cache: true}
+          # batch_size auto -> 1 on CPU, else ~VRAM_GB/6 capped at 32. Generation is the
+          # entire cost of this stage, so this is the knob that decides 20 min vs 3 h.
 
 # Stage 4 — index. Region-aware chunks; flat IP is exact and trivially fast at this
 # corpus size, where HNSW would trade recall for a speedup we do not need.

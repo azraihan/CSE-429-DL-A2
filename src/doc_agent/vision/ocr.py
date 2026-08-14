@@ -74,7 +74,26 @@ class Reader:
             model = model.half()
         self._model = model.to(self._device).eval()
 
-    def _run(self, image) -> str:  # type: ignore[no-untyped-def]
+    def batch_size(self) -> int:
+        """How many pages to generate at once.
+
+        `auto` sizes from free VRAM so the same config runs on a 4 GB laptop card, a
+        16 GB T4 and a 96 GB workstation card without editing anything. Generation is
+        the whole cost of this stage, and unbatched generation leaves a large GPU almost
+        idle, so this is the single knob that decides whether the corpus takes 20
+        minutes or three hours.
+        """
+        want = self.cfg.get("batch_size", "auto")
+        if isinstance(want, int) and want > 0:
+            return want
+        if self._device != "cuda":
+            return 1
+        import torch
+
+        gb = torch.cuda.get_device_properties(0).total_memory / 2**30
+        return max(1, min(32, int(gb // 6)))
+
+    def _run_batch(self, images: list) -> list[str]:  # type: ignore[type-arg]
         import torch
 
         self._load()
@@ -82,7 +101,7 @@ class Reader:
         # Call the image processor directly, not the NougatProcessor wrapper: in
         # transformers 5.x the wrapper forwards its own None defaults into a strictly
         # validated dataclass and dies on `do_crop_margin` before doing any work.
-        pixel_values = self._proc.image_processor(image, return_tensors="pt").pixel_values.to(
+        pixel_values = self._proc.image_processor(images, return_tensors="pt").pixel_values.to(
             self._device
         )
         if self._device == "cuda":
@@ -94,20 +113,21 @@ class Reader:
                 max_new_tokens=int(self.cfg.get("max_new_tokens", 3584)),
                 bad_words_ids=[[self._proc.tokenizer.unk_token_id]],
             )
-        text = self._proc.batch_decode(out, skip_special_tokens=True)[0]
-        text = self._proc.post_process_generation(text, fix_markdown=False)
-        return text.strip()
+        decoded = self._proc.batch_decode(out, skip_special_tokens=True)
+        return [self._proc.post_process_generation(t, fix_markdown=False).strip() for t in decoded]
 
-    def transcribe_page(self, page_id: str) -> str:
-        """Full-page pass — Nougat resolves multi-column reading order itself."""
+    def _run(self, image) -> str:  # type: ignore[no-untyped-def]
+        return self._run_batch([image])[0]
+
+    def page_image(self, page_id: str):  # type: ignore[no-untyped-def]
+        """The full page, as the reader sees it."""
         from PIL import Image
 
-        meta = PAGE_META[page_id]
-        with Image.open(meta["abs_path"]) as img:
-            return self._guarded(self._run(img.convert("RGB")), page_id)
+        with Image.open(PAGE_META[page_id]["abs_path"]) as img:
+            return img.convert("RGB")
 
-    def transcribe_region(self, region: Region) -> str:  # noqa: F405
-        """Crop the region and read it on its own."""
+    def region_image(self, region: Region):  # type: ignore[no-untyped-def]  # noqa: F405
+        """The padded crop of one region — padding stops tight boxes clipping subscripts."""
         from PIL import Image
 
         meta = PAGE_META[region.page_id]
@@ -120,8 +140,17 @@ class Reader:
             min(meta["height"], y1 + pad),
         )
         with Image.open(meta["abs_path"]) as img:
-            crop = img.convert("RGB").crop(box)
-        return self._guarded(self._run(crop), f"{region.page_id}:{region.kind}")
+            return img.convert("RGB").crop(box)
+
+    def transcribe_page(self, page_id: str) -> str:
+        """Full-page pass — Nougat resolves multi-column reading order itself."""
+        return self._guarded(self._run(self.page_image(page_id)), page_id)
+
+    def transcribe_region(self, region: Region) -> str:  # noqa: F405
+        """Crop the region and read it on its own."""
+        return self._guarded(
+            self._run(self.region_image(region)), f"{region.page_id}:{region.kind}"
+        )
 
     def _guarded(self, text: str, what: str) -> str:
         if self.cfg.get("repetition_guard", True) and _looks_degenerate(text):
@@ -161,61 +190,85 @@ def transcribe(regions: list[Region], cfg: dict) -> list[Chunk]:  # noqa: F405
     """
     reader = Reader(cfg)
     cache = _load_cache() if cfg.get("ocr", {}).get("cache", True) else {}
-    os.makedirs(os.path.dirname(_cache_path()), exist_ok=True)
-    fh_cache = open(_cache_path(), "a", encoding="utf-8")
-    hits = 0
-
-    def read(key: str, fn: Any) -> str:
-        nonlocal hits
-        if key in cache:
-            hits += 1
-            return cache[key]
-        text = fn()
-        cache[key] = text
-        fh_cache.write(json.dumps({"key": key, "text": text}, ensure_ascii=False) + "\n")
-        fh_cache.flush()
-        return text
 
     by_page: dict[str, list[Region]] = {}  # noqa: F405
     for r in regions:
         by_page.setdefault(r.page_id, []).append(r)
 
-    out: list[Chunk] = []  # noqa: F405
+    # 1. enumerate every unit of work, page prose and region crops alike -------------
+    jobs: list[tuple[str, str, Any]] = []  # (cache key, "page"|"region", payload)
     n_region_calls = 0
     for page_id, regs in by_page.items():
-        meta = PAGE_META.get(page_id, {})
-        doc_id = meta.get("doc_id", page_id.split("/")[1] if "/" in page_id else page_id)
-
-        prose = read(page_id, lambda pid=page_id: reader.transcribe_page(pid))  # type: ignore[misc]
-        if prose:
-            out.append(
-                Chunk(  # noqa: F405
-                    id=f"{page_id}#prose",
-                    doc_id=doc_id,
-                    text=prose,
-                    page_ids=[page_id],
-                )
-            )
-
+        jobs.append((page_id, "page", page_id))
         for r in regs:
             if r.kind not in ("figure", "table"):
                 continue
             order = REGION_META.get((r.page_id, r.bbox), {}).get("order", 0)
-            key = f"{page_id}#r{order:02d}:{r.kind}"
-            text = read(key, lambda r=r: reader.transcribe_region(r))  # type: ignore[misc]
+            jobs.append((f"{page_id}#r{order:02d}:{r.kind}", "region", r))
             n_region_calls += 1
-            if not text.strip():
-                continue
+
+    todo = [j for j in jobs if j[0] not in cache]
+    hits = len(jobs) - len(todo)
+    bs = reader.batch_size()
+    if todo:
+        log.info("ocr: %d to transcribe, %d cached, batch_size=%d", len(todo), hits, bs)
+
+    # 2. generate in batches, flushing each result to the resume cache ---------------
+    os.makedirs(os.path.dirname(_cache_path()), exist_ok=True)
+    with open(_cache_path(), "a", encoding="utf-8") as fh_cache:
+        for start in range(0, len(todo), bs):
+            batch = todo[start : start + bs]
+            images = [
+                reader.page_image(payload) if kind == "page" else reader.region_image(payload)
+                for _, kind, payload in batch
+            ]
+            try:
+                texts = reader._run_batch(images)
+            except RuntimeError as exc:  # OOM on an over-large batch: fall back per item
+                if "out of memory" not in str(exc).lower() or len(batch) == 1:
+                    raise
+                log.warning("OCR batch of %d hit OOM; retrying one at a time", len(batch))
+                import torch
+
+                torch.cuda.empty_cache()
+                texts = [reader._run_batch([img])[0] for img in images]
+
+            for (key, _, _), text in zip(batch, texts, strict=True):
+                text = reader._guarded(text, key)
+                cache[key] = text
+                fh_cache.write(json.dumps({"key": key, "text": text}, ensure_ascii=False) + "\n")
+            fh_cache.flush()
+            if start and start % (bs * 20) == 0:
+                log.info("ocr: %d/%d transcribed", start, len(todo))
+
+    # 3. assemble chunks from the cache ---------------------------------------------
+    out: list[Chunk] = []  # noqa: F405
+    for key, kind, payload in jobs:
+        text = cache.get(key, "")
+        if not text.strip():
+            continue
+        page_id = payload if kind == "page" else payload.page_id
+        meta = PAGE_META.get(page_id, {})
+        doc_id = meta.get("doc_id", page_id.split("/")[1] if "/" in page_id else page_id)
+        if kind == "page":
             out.append(
                 Chunk(  # noqa: F405
-                    id=f"{page_id}#r{order:02d}:{r.kind}",
+                    id=f"{page_id}#prose",
                     doc_id=doc_id,
-                    text=f"[{r.kind}] {text}",
+                    text=text,
+                    page_ids=[page_id],
+                )
+            )
+        else:
+            out.append(
+                Chunk(  # noqa: F405
+                    id=key,
+                    doc_id=doc_id,
+                    text=f"[{payload.kind}] {text}",
                     page_ids=[page_id],
                 )
             )
 
-    fh_cache.close()
     log.info(
         "ocr: %d chunks from %d pages (%d page passes, %d region crops, %d cache hits)",
         len(out),
