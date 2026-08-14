@@ -1,0 +1,12 @@
+{
+  "n_chunks": 4,
+  "dim": 768,
+  "index_type": "faiss:flat",
+  "embed_model": "BAAI/bge-base-en-v1.5",
+  "chunk_tokens": 256,
+  "overlap": 32,
+  "n_pages": 2,
+  "n_docs": 1,
+  "n_words": 485,
+  "index_bytes": 12333
+}

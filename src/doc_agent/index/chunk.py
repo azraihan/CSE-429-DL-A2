@@ -1,4 +1,5 @@
 """Stage 4 — chunk text"""
+
 from __future__ import annotations
 
 import re
@@ -10,8 +11,15 @@ from ..logging_conf import get_logger
 log = get_logger(__name__)
 
 _MATH_FIXES = {
-    "−": "-", "–": "-", "—": "-", "‘": "'", "’": "'",
-    "“": '"', "”": '"', "×": "x", " ": " ",
+    "−": "-",
+    "–": "-",
+    "—": "-",
+    "‘": "'",
+    "’": "'",
+    "“": '"',
+    "”": '"',
+    "×": "x",
+    " ": " ",
 }
 
 
@@ -26,7 +34,8 @@ def _normalize(text: str) -> str:
 def _sections(text: str) -> list[str]:
     """Split page prose on Markdown headings — Nougat emits them, so they are free
     semantic boundaries and a far better cut point than a fixed window."""
-    parts, cur = [], []
+    parts: list[str] = []
+    cur: list[str] = []
     for line in text.splitlines():
         if re.match(r"^\s{0,3}#{1,6}\s+\S", line) and cur:
             parts.append("\n".join(cur).strip())

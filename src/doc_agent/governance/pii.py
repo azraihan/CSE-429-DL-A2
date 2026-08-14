@@ -9,6 +9,7 @@ rather than content retrieve nothing and the agent abstains.
 
 Wired at AFTER_OCR (before indexing), BEFORE_ANSWER (outgoing answer) and ON_LOG.
 """
+
 from __future__ import annotations
 
 import re
@@ -18,7 +19,7 @@ from ..logging_conf import get_logger
 
 log = get_logger(__name__)
 
-_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
+_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("EMAIL", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")),
     ("ORCID", re.compile(r"\b\d{4}-\d{4}-\d{4}-\d{3}[\dXx]\b")),
     ("URL_USER", re.compile(r"\b(?:https?://)?(?:github|linkedin)\.com/[\w./-]+", re.I)),
@@ -104,6 +105,6 @@ def register(hooks) -> None:  # type: ignore[no-untyped-def]
             ctx["msg"] = redact(msg)
         return ctx
 
-    hooks.register(hooks.AFTER_OCR, _scrub)       # scrub extracted text before indexing
-    hooks.register(hooks.BEFORE_ANSWER, _scrub)   # scrub the outgoing answer
-    hooks.register(hooks.ON_LOG, _scrub)          # scrub logs
+    hooks.register(hooks.AFTER_OCR, _scrub)  # scrub extracted text before indexing
+    hooks.register(hooks.BEFORE_ANSWER, _scrub)  # scrub the outgoing answer
+    hooks.register(hooks.ON_LOG, _scrub)  # scrub logs

@@ -1,10 +1,14 @@
 """Stage 5 — dense retrieval"""
+
 from __future__ import annotations
+
 from ..contracts import *  # noqa
+from ..contracts import Chunk  # explicit: keeps the star import from hiding the name
 from ..index import embed, store
 from ..logging_conf import get_logger
 
 log = get_logger(__name__)
+
 
 class Retriever:
     def __init__(self, cfg: dict) -> None:
@@ -29,15 +33,18 @@ class Retriever:
         scores, ids = self._index.search(qv, min(k, len(self._chunks)))
 
         out: list[Chunk] = []  # noqa: F405
-        for score, idx in zip(scores[0], ids[0]):
+        for score, idx in zip(scores[0], ids[0], strict=False):
             if idx < 0:
                 continue
             src = self._chunks[int(idx)]
             # copy, so a cached chunk never carries a stale score from an earlier query
             out.append(
                 Chunk(  # noqa: F405
-                    id=src.id, doc_id=src.doc_id, text=src.text,
-                    page_ids=list(src.page_ids), score=float(score),
+                    id=src.id,
+                    doc_id=src.doc_id,
+                    text=src.text,
+                    page_ids=list(src.page_ids),
+                    score=float(score),
                 )
             )
         return out
@@ -48,12 +55,13 @@ def top_score(chunks: list[Chunk]) -> float:
     """Strength of the current evidence = best chunk score (0.0 if empty)."""
     return max((c.score for c in chunks), default=0.0)
 
+
 def is_weak(chunks: list[Chunk], cfg: dict) -> bool:
     """Weak evidence = best score below cfg.retrieve.weak_threshold."""
     return top_score(chunks) < cfg["retrieve"]["weak_threshold"]
+
 
 def next_k(k: int, cfg: dict) -> int | None:
     """Widen the net: k + k_step, or None once it would exceed k_max (signal to ABSTAIN)."""
     nk = k + cfg["retrieve"]["k_step"]
     return nk if nk <= cfg["retrieve"]["k_max"] else None
-

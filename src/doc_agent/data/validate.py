@@ -1,4 +1,5 @@
 """Data — data schema/quality validation at ingest"""
+
 from __future__ import annotations
 
 import os
@@ -45,7 +46,9 @@ def validate(pages: list[Page]) -> None:  # noqa: F405
             splits_by_doc[p.doc_id].add(split)
     leaked = {d: s for d, s in splits_by_doc.items() if len(s) > 1}
     if leaked:
-        problems.append(f"LEAKAGE: {len(leaked)} documents span multiple splits: {list(leaked)[:3]}")
+        problems.append(
+            f"LEAKAGE: {len(leaked)} documents span multiple splits: {list(leaked)[:3]}"
+        )
 
     dupes = len(pages) - len({p.id for p in pages})
     if dupes:

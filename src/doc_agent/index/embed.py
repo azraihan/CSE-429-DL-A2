@@ -1,4 +1,5 @@
 """Stage 4 — embed chunks"""
+
 from __future__ import annotations
 
 from typing import Any

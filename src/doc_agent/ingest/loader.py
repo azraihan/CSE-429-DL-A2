@@ -1,10 +1,12 @@
 """Stage 1 — load scanned page-images"""
+
 from __future__ import annotations
 
 import json
 import os
 
 from ..contracts import *  # noqa
+from ..contracts import Page  # explicit: keeps the star import from hiding the name
 from ..logging_conf import get_logger
 
 log = get_logger(__name__)

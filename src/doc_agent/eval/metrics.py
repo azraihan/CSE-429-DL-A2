@@ -1,8 +1,14 @@
 """Stage 9 — metrics"""
+
 from __future__ import annotations
-import re, unicodedata
+
+import re
+import unicodedata
 from collections import Counter
+from typing import Any
+
 from ..contracts import *  # noqa
+from ..contracts import Answer  # explicit: keeps the star import from hiding the name
 
 
 def normalize_text(s: str) -> str:
@@ -55,9 +61,22 @@ def wer(pred: str, gold: str) -> float:
         prev = cur
     return prev[-1] / len(b)
 
-def recall_at_k(retrieved: list, gold: list, k: int) -> float: raise NotImplementedError
-def groundedness(answer: Answer) -> float: raise NotImplementedError  # no-hallucination
-def citation_accuracy(answer: Answer) -> float: raise NotImplementedError
-def ece(confidences, correct) -> float: raise NotImplementedError     # calibration
-def subgroup_gap(scores_by_group: dict) -> float: raise NotImplementedError  # fairness
 
+def recall_at_k(retrieved: list, gold: list, k: int) -> float:
+    raise NotImplementedError
+
+
+def groundedness(answer: Answer) -> float:
+    raise NotImplementedError  # no-hallucination
+
+
+def citation_accuracy(answer: Answer) -> float:
+    raise NotImplementedError
+
+
+def ece(confidences: Any, correct: Any) -> float:
+    raise NotImplementedError  # calibration
+
+
+def subgroup_gap(scores_by_group: dict) -> float:
+    raise NotImplementedError  # fairness

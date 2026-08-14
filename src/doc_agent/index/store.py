@@ -1,4 +1,5 @@
 """Stage 4 — vector store"""
+
 from __future__ import annotations
 
 import json
@@ -30,6 +31,7 @@ def build(chunks: Any, vectors: Any, cfg: dict) -> None:
     n, dim = vectors.shape
     kind = str(cfg["index"].get("type", "faiss:flat")).lower()
 
+    index: Any
     if kind.endswith("hnsw"):
         index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
         index.hnsw.efConstruction = 200

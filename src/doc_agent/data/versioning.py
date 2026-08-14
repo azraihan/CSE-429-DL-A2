@@ -1,4 +1,5 @@
 """Data — corpus versioning (which corpus version -> which result)"""
+
 from __future__ import annotations
 
 import hashlib

@@ -16,12 +16,13 @@ Two region sources, in priority order:
 `contracts.Region` is FIXED at (page_id, bbox, kind), so reading-order index and region
 provenance live in the REGION_META sidecar.
 """
+
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 
 from ..contracts import *  # noqa
+from ..contracts import Page, Region  # explicit: keeps the star import from hiding names
 from ..ingest.loader import PAGE_META, load_qa
 from ..logging_conf import get_logger
 
@@ -81,7 +82,7 @@ def _gutter(binv) -> tuple[int, int] | None:  # type: ignore[no-untyped-def]
     gw = max(4, int(0.012 * w))
     bh, st = int(0.20 * h), max(1, int(0.10 * h))
 
-    def widest_gap(col: "np.ndarray", thr: float) -> tuple[int, int] | None:
+    def widest_gap(col: np.ndarray, thr: float) -> tuple[int, int] | None:
         best: tuple[int, int] | None = None
         start = None
         for x in range(lo, hi + 1):
@@ -171,6 +172,7 @@ def _analyse(
             min(height, int(b[3] * inv)),
         )
 
+    blocks: list[tuple[int, int, int, int]] = []
     gut = _gutter(binv)
     if gut is None:
         blocks = [up(b) for b in _blocks_in(binv, 0, w, 0, h)]
@@ -179,7 +181,7 @@ def _analyse(
     gx0, gx1 = gut
     spans = (binv[:, gx0:gx1] > 0).sum(axis=1) > max(1, 0.35 * (gx1 - gx0))
 
-    def _runs(mask: "np.ndarray") -> list[tuple[int, int, bool]]:
+    def _runs(mask: np.ndarray) -> list[tuple[int, int, bool]]:
         out: list[tuple[int, int, bool]] = []
         y = 0
         while y < len(mask):
@@ -207,7 +209,6 @@ def _analyse(
         (int(y0 * inv), int(y1 * inv), v) for y0, y1, v in _runs(spans) if y1 - y0 >= 4
     ]
 
-    blocks: list[tuple[int, int, int, int]] = []
     for by0, by1, spanning in bands:
         sy0, sy1 = int(by0 * scale), int(by1 * scale)
         if spanning:
@@ -251,7 +252,10 @@ def detect(pages: list[Page], cfg: dict) -> list[Region]:
         ]
         candidates += annotated
 
-        def band_of(box: tuple[int, int, int, int]) -> tuple[int, bool]:
+        def band_of(
+            box: tuple[int, int, int, int],
+            bands: list[tuple[int, int, bool]] = bands,  # bind this page's bands
+        ) -> tuple[int, bool]:
             centre = (box[1] + box[3]) / 2.0
             for i, (by0, by1, spanning) in enumerate(bands):
                 if by0 <= centre < by1:
