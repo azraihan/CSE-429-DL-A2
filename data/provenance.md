@@ -60,7 +60,12 @@ These are **born-digital renders, not degraded scans** — there is no speckle, 
 fading, and therefore no restoration stage (`enhance.enabled: false`). The difficulty is
 **layout**, which is what our data speciality claims:
 
-- **42.5%** of pages (774/1,823) are multi-column, where reading order ≠ visual order.
+- **16.8%** of pages (306/1,823) are multi-column, where reading order ≠ visual order.
+  Detected on the rendered page by scanning horizontal bands for a vertical gutter that
+  persists through most of the page's text — the same rule `vision/layout.py` uses, so
+  the strata cannot disagree with the layout stage that acts on them. Verified by eye on
+  8 pages (8/8). An earlier PDF-text-block heuristic reported 42.5% and was wrong: it
+  counted indented block quotes and narrow single-column blocks as columns.
 - **56.1%** of QA pairs have their evidence inside a **figure or table region**, not in
   running prose (stratum S3 below). This is the single most important property of the
   corpus and the reason Stage 2 Layout is load-bearing rather than incidental.
@@ -77,8 +82,8 @@ column-detection pass over the PDF text blocks:
 
 | Stratum | Definition | QA pairs | Share |
 |---|---|---|---|
-| S1 | evidence in running text, single-column page | 336 | 20.7% |
-| S2 | evidence in running text, multi-column page | 376 | 23.2% |
+| S1 | evidence in running text, single-column page | 573 | 35.3% |
+| S2 | evidence in running text, multi-column page | 139 | 8.6% |
 | S3 | evidence inside a figure, table, or displayed equation | 911 | 56.1% |
 
 ## Split policy (by document)
@@ -112,7 +117,7 @@ robustness NFR with its `F1(S1) − F1(S3) ≤ 8` target — are unchanged, as i
 | ~150 words per page | 432 mean, 419 median |
 | cs ≈ 61% of documents | exactly 12.5% per category (10 docs × 8) |
 | ~18,400 QA pairs | 1,623 (Bench) / 30,780 (Train) |
-| S1 45% / S2 34% / S3 21% | S1 20.7% / S2 23.2% / **S3 56.1%** |
+| S1 45% / S2 34% / S3 21% | S1 35.3% / S2 8.6% / **S3 56.1%** |
 | ~12% of pages near-zero text | 0.7% (13 pages) |
 | Licence "MIT" (§2) | link-only, as A1 §4 itself already argued |
 

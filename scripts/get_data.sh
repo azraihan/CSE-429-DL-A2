@@ -60,17 +60,47 @@ print(f"      {len(pdfs)} PDFs")
 
 # ---------------------------------------------------------------- 3. render
 import pymupdf
+from PIL import Image
 
-def is_multicolumn(page) -> bool:
-    """Two text bands separated by a gutter -> multi-column page."""
-    W = page.rect.width
-    blocks = [b for b in page.get_text("blocks") if b[4].strip()]
-    narrow = [b for b in blocks if (b[2] - b[0]) < 0.6 * W]
-    if len(narrow) < 6:
+def is_multicolumn(png_path) -> bool:
+    """Two text columns separated by a vertical whitespace gutter.
+
+    Measured on the RENDERED PAGE, not on the PDF's text blocks: the page image is what
+    every downstream stage actually sees, and src/doc_agent/vision/layout.py finds its
+    columns the same way. Deriving this flag from the PDF instead would let the S1/S2
+    strata disagree with the layout stage that has to act on them.
+    """
+    import numpy as np
+    with Image.open(png_path) as im:
+        a = np.asarray(im.convert("L"))
+    if a.size == 0:
         return False
-    left  = [b for b in narrow if (b[0] + b[2]) / 2 < 0.5 * W]
-    right = [b for b in narrow if (b[0] + b[2]) / 2 >= 0.5 * W]
-    return min(len(left), len(right)) >= 3 and min(len(left), len(right)) >= 0.25 * len(narrow)
+    h, w = a.shape
+    ink = a < 128
+    lo, hi = int(0.30 * w), int(0.70 * w)
+    gw = max(6, int(0.012 * w))
+    bh, st = int(0.20 * h), max(1, int(0.10 * h))
+
+    # Scan horizontal bands rather than the whole page: a wide figure above two columns
+    # closes the gutter in a whole-page projection and hides the columns underneath.
+    text_bands = gutter_bands = 0
+    for y in range(0, max(1, h - bh + 1), st):
+        band = ink[y:y + bh]
+        if band.sum() < 0.010 * bh * w:
+            continue
+        col = band.sum(axis=0).astype(np.float32)
+        if col[:lo].sum() == 0 or col[hi:].sum() == 0:
+            continue
+        text_bands += 1
+        thr = max(1.0, 0.02 * bh)
+        run = best = 0
+        for x in range(lo, hi):
+            run = run + 1 if col[x] <= thr else 0
+            best = max(best, run)
+        gutter_bands += best >= gw
+    # One band with a gap is a coincidence (a short line, an indented quote); a real
+    # two-column page keeps the gutter open through most of its text.
+    return bool(text_bands >= 2 and gutter_bands / text_bands >= 0.5)
 
 print(f"[3/5] rendering pages at {dpi} DPI")
 zoom = dpi / 72.0
@@ -85,7 +115,13 @@ for doc_id, (path, title) in sorted(pdfs.items()):
         if not os.path.exists(png):
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), colorspace=pymupdf.csGRAY)
             pix.save(png)
+            px_w, px_h = pix.width, pix.height
             rendered += 1
+        else:
+            # read the real size back: rounding the rect * zoom is off by a pixel on
+            # some page sizes, and every rel_bbox -> pixel mapping depends on this
+            with Image.open(png) as im:
+                px_w, px_h = im.size
         text = page.get_text("text")
         manifest.append({
             "page_id":   f"{category}/{doc_id}/p{i:03d}",
@@ -95,10 +131,10 @@ for doc_id, (path, title) in sorted(pdfs.items()):
             "page_no":   i,
             "n_pages_doc": d.page_count,
             "image_path": os.path.relpath(png, raw).replace("\\", "/"),
-            "width":     int(page.rect.width  * zoom),
-            "height":    int(page.rect.height * zoom),
+            "width":     px_w,
+            "height":    px_h,
             "n_words":   len(re.findall(r"\S+", text)),
-            "multicolumn": is_multicolumn(page),
+            "multicolumn": is_multicolumn(png),
         })
     d.close()
     done += 1
@@ -122,15 +158,35 @@ qa, missing = [], 0
 for line in open(qa_path, encoding="utf-8"):
     r = json.loads(line)
     doc = r["doc_name"]
-    pids = []
-    for pg in flatten([r["evidence_page"]]):
+    ev_pages = list(flatten([r["evidence_page"]]))
+    boxes    = r.get("bbox") or []
+    rboxes   = r.get("rel_bbox") or []
+    stypes   = r.get("subimg_type") or []
+
+    # One evidence entry per page, keeping each box aligned with its own type so
+    # Stage 2 can emit a figure/table region rather than a shapeless page hint.
+    evidence, pids = [], []
+    for i, pg in enumerate(ev_pages):
         pid = by_doc_page.get((doc, int(pg)))
-        if pid:
-            pids.append(pid)
+        if not pid:
+            continue
+        pids.append(pid)
+        pb = boxes[i]  if i < len(boxes)  else []
+        pr = rboxes[i] if i < len(rboxes) else []
+        pt = stypes[i] if i < len(stypes) else []
+        if pt and not isinstance(pt, list):
+            pt = [pt]
+        evidence.append({
+            "page_id":   pid,
+            "boxes":     [b for b in pb if isinstance(b, list) and len(b) == 4],
+            "rel_boxes": [b for b in pr if isinstance(b, list) and len(b) == 4],
+            "types":     list(pt),
+        })
     if not pids:
         missing += 1
         continue
-    types = set(flatten([r.get("subimg_type", [])]))
+
+    types = set(flatten([stypes]))
     if types & {"image", "table"}:
         stratum = "S3"                                    # evidence inside a figure/table/equation
     elif any(mc.get(p, False) for p in pids):
@@ -140,8 +196,7 @@ for line in open(qa_path, encoding="utf-8"):
     qa.append({
         "query": r["query"], "answer": r["answer"], "doc_id": doc,
         "category": r.get("category"), "page_ids": pids,
-        "bbox": r.get("bbox"), "rel_bbox": r.get("rel_bbox"),
-        "subimg_type": sorted(types), "stratum": stratum,
+        "evidence": evidence, "subimg_type": sorted(types), "stratum": stratum,
     })
 print(f"      {len(qa)} QA items ({missing} dropped: evidence page not in corpus)")
 print("      strata:", dict(collections.Counter(q['stratum'] for q in qa)))
