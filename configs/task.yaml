@@ -1,7 +1,21 @@
 # Stage 0 — problem statement (one per group). Set by assignment.
-group_id: "G00"
-domain: "almanacs/panjika"
-data_speciality: "degraded-scans"   # ONE hard corpus property (English is not one)
-primary_nfr: "reproducible"
-nfr_target: "p95 latency <= 300ms"   # your concrete committed target
-corpus: {min_pages: 300, min_words: 60000, source_url: "", license: ""}
+group_id: "G19"
+domain: "scientific-literature"        # researchers triaging papers for one reported quantity
+data_speciality: "multi-column"        # dense multi-column scientific layout: reading order != visual order,
+                                       # displayed equations, multi-row tables, evidence inside figure regions
+primary_nfr: "robust"
+nfr_target: "answer-F1 gap F1(S1) - F1(S3) <= 8"   # worst-stratum gap, not a pooled average
+corpus:
+  min_pages: 300
+  min_words: 60000
+  source_url: "https://huggingface.co/datasets/Yuwh07/SciEGQA-Bench"
+  license: "link-only"                 # no licence field on the HF card; arXiv-derived renders.
+                                       # We redistribute no page images — scripts/get_data.sh rebuilds
+                                       # them from a pinned revision. See data/provenance.md.
+  revision: "9bdca77be633cc3259d7e3739d35b38ab00bf5d9"
+
+# Evidence strata for the primary NFR (derived from the corpus's own subimg_type + bbox annotations):
+#   S1 — evidence in running text on a single-column page
+#   S2 — evidence in running text on a multi-column page
+#   S3 — evidence inside a figure, table, or displayed equation
+strata: ["S1", "S2", "S3"]

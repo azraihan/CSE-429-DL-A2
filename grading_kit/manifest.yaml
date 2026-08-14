@@ -1,33 +1,54 @@
 # grading_kit/manifest.yaml — the SINGLE entry point a grader reads.
-# You fill this in. It declares the THREE axes and points to everything
-# needed to reproduce, evaluate, and grade the project. A grader opens
-# ONLY this file; it points to the rest. Build/run scripts and the eval
-# tasks are NAMED here, not copied, so they never go stale.
+# Declares the THREE axes and points to everything needed to reproduce,
+# evaluate, and grade the project. A grader opens ONLY this file.
 
-project_id: ""              # your team id
+project_id: "G19"           # PaperScholar
 
 axes:
-  domain: ""                # your corpus subject / real user (see Roster; one per team)
-  data_speciality: ""       # ONE hard property of your corpus you are handed (see Data-Speciality Catalog)
-                            #   e.g. bangla | arabic | code-switching | degraded-scans | multi-column |
-                            #        handwritten | old-orthography | math-notation | dirty-ocr | ...
-                            #   (English is not a speciality; if your corpus is English, pick a data condition.)
-  primary_nfr: ""           # ONE quality you optimise ABOVE baseline (see NFR sheet). Faithful &
-                            #   accurate are REQUIRED of everyone (baseline), so they are NOT choices.
-  nfr_target: ""            # the concrete target you commit to for that NFR, e.g. "p95 latency <= 300ms",
-                            #   "peak RAM <= 2GB", "ECE <= 0.05", "PII recall >= 0.98"
+  domain: "scientific-literature"
+  # Real user: a PhD student or postdoc screening ~40 candidate papers to decide which
+  # five to read in full, and which single reported quantity from each belongs in a
+  # related-work table. The decision is triage.
+
+  data_speciality: "multi-column"
+  # Dense multi-column scientific page layout: reading order is not visual order, and
+  # the answer often sits inside a figure, table, or displayed equation rather than in
+  # running prose. Measured in this corpus: 42.5% of pages are multi-column, and 56.1%
+  # of QA pairs have evidence annotated inside a figure or table region.
+
+  primary_nfr: "robust"
+  # Answer quality must hold ACROSS page types, not on average. Reported per stratum,
+  # never pooled. Abstentions count as neither correct nor incorrect and are reported
+  # per stratum so the gap cannot be bought by refusing hard pages.
+
+  nfr_target: "answer-F1 gap F1(S1) - F1(S3) <= 8"
+  # Strata (built in scripts/get_data.sh from the corpus's own subimg_type + a
+  # column-detection pass; see data/provenance.md):
+  #   S1 - evidence in running text, single-column page   (336 QA, 20.7%)
+  #   S2 - evidence in running text, multi-column page    (376 QA, 23.2%)
+  #   S3 - evidence inside a figure/table/equation        (911 QA, 56.1%)
+
+success_metric: "pooled answer-F1 >= 0.70"   # from A1, unchanged
+baseline: "top-1 retrieved chunk verbatim, no layout localization, no rerank, no re-search"
 
 corpus:
-  path: data/raw/                   # where the scanned page-images live
-  pages: 0                          # total pages  (floor: >= 300)
-  words: 0                          # total words  (floor: >= 60000)
-  provenance: data/provenance.md    # source + licence + counts
+  path: data/raw/                   # rebuilt by scripts/get_data.sh; gitignored, never redistributed
+  source: "https://huggingface.co/datasets/Yuwh07/SciEGQA-Bench"
+  revision: "9bdca77be633cc3259d7e3739d35b38ab00bf5d9"
+  license: "link-only"              # no licence field upstream; arXiv-derived. See provenance.
+  documents: 80
+  pages: 1823                       # floor: >= 300
+  words: 788265                     # floor: >= 60000
+  qa_pairs: 1623
+  splits: {train: 56, val: 16, test: 8}   # BY DOCUMENT, stratified by category, seed 42
+  provenance: data/provenance.md
 
 heldout:
-  pages_dir: grading_kit/heldout_pages/   # page-images set aside, never OCR-trained on
-  labels:    grading_kit/labels.jsonl     # ground-truth transcriptions for those pages
+  pages_dir: grading_kit/heldout_pages/   # 18 pages from test documents, never OCR-tuned on
+  labels:    grading_kit/labels.jsonl     # ground-truth transcriptions (the OCR oracle)
 
 entrypoints:                          # named, not duplicated (they build/run the real code)
+  get_data:    scripts/get_data.sh
   build_index: scripts/build_index.sh
   run_query:   scripts/run.sh
   eval_tasks:  grading_kit/tasks.jsonl      # authored in A3

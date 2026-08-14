@@ -1,14 +1,30 @@
 # THE place you set models & parameters. Code reads only from here.
 seed: 42
-device: cuda
+device: cpu                  # local default; the Colab build overrides to "cuda"
 
-enhance:   {enabled: true,  model: "unet_small", type: "diffusion"}   # or "vae" / "none"
-layout:    {model: "detectron2:layout", score_thr: 0.5}
-ocr:       {model: "microsoft/trocr-base-printed", finetune: true}    # BASELINE = pretrained OCR
-embed:     {model: "sentence-transformers/all-MiniLM-L6-v2", dim: 384}
-index:     {type: "faiss:hnsw", chunk_tokens: 256, overlap: 32}
-retrieve:  {k: 10, k_step: 10, k_max: 40, weak_threshold: 0.35, rerank: true, reranker: "cross-encoder/ms-marco-MiniLM-L6-v2"}   # k_step/k_max/weak_threshold drive evidence-gated re-search
-agent:     {max_steps: 8, autonomy: "act-with-approval", budget_usd: 0.05}
-rl:        {algo: "ppo", train_policy: false}                         # bonus: set true
-serve:     {batch: true}
-deploy:    {target: "hf-spaces"}
+# Stage 1 — ingest. Pages are born-digital 300-DPI renders, so there is nothing for a
+# restoration model to repair: enhancement stays OFF (it is a bonus stage gated on
+# degraded scans, which this corpus is not).
+ingest:   {dpi: 300, grayscale: true, normalize: "NFKC", crop_padding_px: 8}
+enhance:  {enabled: false, model: "none", type: "none"}
+
+# Stage 2 — layout. The corpus ships its own figure/table boxes; the detector is the
+# fallback for pages with no annotation. score_thr applies to the detector only.
+layout:   {model: "juliozhao/DocLayout-YOLO-DocStructBench", score_thr: 0.4,
+           use_dataset_bboxes: true, column_split: true}
+
+# Stage 3 — OCR. Nougat is the reproduced published method (Blecher et al., 2023),
+# run through HF transformers rather than the unmaintained nougat-ocr package.
+ocr:      {model: "facebook/nougat-base", finetune: false, max_new_tokens: 3584,
+           batch_size: 1, repetition_guard: true}
+
+# Stage 4 — index. Region-aware chunks; flat IP is exact and trivially fast at this
+# corpus size, where HNSW would trade recall for a speedup we do not need.
+embed:    {model: "BAAI/bge-base-en-v1.5", dim: 768, normalize: true, batch_size: 16}
+index:    {type: "faiss:flat", chunk_tokens: 256, overlap: 32, region_aware: true}
+
+retrieve: {k: 10, k_step: 10, k_max: 40, weak_threshold: 0.35, rerank: true, reranker: "BAAI/bge-reranker-base"}   # k_step/k_max/weak_threshold drive evidence-gated re-search
+agent:    {max_steps: 8, autonomy: "act-with-approval", budget_usd: 0.05}
+rl:       {algo: "ppo", train_policy: false}                         # bonus: set true
+serve:    {batch: true}
+deploy:   {target: "hf-spaces"}
