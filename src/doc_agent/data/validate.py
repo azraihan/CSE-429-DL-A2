@@ -1,3 +1,33 @@
+# =============================================================================
+# File:     src/doc_agent/data/validate.py
+# Layer:    Data - schema and quality validation at ingest
+# Status:   IMPLEMENTED
+#
+# Purpose:
+#   Fails the run early and loudly when the corpus is not what the rest of the
+#   system assumes. Every check here corresponds to a failure that would
+#   otherwise appear much later as an unexplained metric.
+#
+# validate(pages) collects ALL problems before raising, so one run reports every
+# fault rather than one per attempt:
+#   1. Corpus floors  - >= 300 pages and >= 60,000 words (MIN_PAGES / MIN_WORDS),
+#                       the assignment's minimum scale.
+#   2. Missing images - a manifest row whose PNG is absent.
+#   3. Manifest gaps  - a Page with no PAGE_META row; every downstream stage
+#                       looks up geometry there, so this would fail later.
+#   4. SPLIT LEAKAGE  - the check that matters most. A1 named "the same paper in
+#                       train and test" as the single most likely leak. Splits
+#                       are assigned per doc_id and inherited by every page, so
+#                       the leak should be structurally impossible - this
+#                       ASSERTS that rather than assuming it, because a leak here
+#                       inflates every reported number and is invisible in the
+#                       metrics themselves.
+#   5. Duplicate page ids.
+#
+# Inputs  : list[Page], PAGE_META (from ingest/loader.py)
+# Raises  : ValueError listing every problem found
+# =============================================================================
+
 """Data — data schema/quality validation at ingest"""
 
 from __future__ import annotations
