@@ -18,7 +18,7 @@
 ## How the ground truth was produced
 
 These are born-digital renders, so the source PDF's text layer is authoritative for
-characters. Two things were **not** taken on trust:
+characters. Four things were **not** taken on trust:
 
 1. **Reading order.** PyMuPDF's default block order interleaves the two columns of a
    multi-column page — exactly the failure this project exists to fix. Transcriptions
@@ -27,6 +27,18 @@ characters. Two things were **not** taken on trust:
 2. **Figure internals.** A figure's axis labels and legend fragments appear in the text
    layer as scattered tokens. Nougat emits a figure's *caption*, not its internals, so
    scoring against them would penalise the reader for a task it is not performing.
+3. **Mathematical notation.** This corpus's LaTeX math fonts map glyphs to Mathematical
+   Alphanumeric Symbols (U+1D400–1D7FF), but the PDFs' ToUnicode values are **truncated
+   to 16 bits**, dropping every math italic into the Hangul Syllables block — the oracle
+   initially appeared to be written in Korean. Verified across all 27 distinct affected
+   characters (529 occurrences): each lands exactly on its intended symbol at +0x10000.
+   The extractor repairs this, and NFKC then folds a math italic *n* to plain `n`, which
+   is directly comparable with the `\(n\)` the reader emits. Without the repair, three
+   maths pages scored 0.42–0.79 token-F1 purely as an artefact of the broken oracle.
+4. **Table structure.** The raw text layer emits a table's cells as loose blocks with no
+   row structure, so a column of numbers can arrive before its row labels. Tables are
+   detected and extracted as a grid, then linearised row by row, which matches the order
+   both a human and the reader produce. 7 of the 18 pages contain such a table.
 
 Each record therefore carries two transcriptions:
 

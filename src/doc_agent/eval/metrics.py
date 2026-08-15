@@ -10,11 +10,33 @@ from typing import Any
 from ..contracts import *  # noqa
 from ..contracts import Answer  # explicit: keeps the star import from hiding the name
 
+# The reader emits LaTeX ("\(n\)", "\mathcal{C}") where the PDF text layer emits font
+# mapped Unicode, so the control sequences are stripped and both sides compared as text.
+# Math VARIABLES are scored: the oracle recovers them (the PDF's truncated codepoints are
+# repaired and NFKC folds a math italic n to "n"), and "\(n\)" reduces to "n" here, so the
+# two now agree. Greek letters and math operators stay excluded because LaTeX spells them
+# as words ("\alpha") and the PDF as glyphs ("α"); the remaining classes are defensive,
+# for any page whose font mapping is broken in a way the oracle did not repair.
+_MATH_GLYPHS = re.compile(
+    "["
+    "\u1d400-\u1d7ff"  # Mathematical Alphanumeric Symbols
+    "\uac00-\ud7af"  # Hangul Syllables (mis-decoded math italics)
+    "\u3400-\u4dbf"  # CJK Ext A
+    "\u4e00-\u9fff"  # CJK Unified
+    "\ue000-\uf8ff"  # Private Use (unmapped font glyphs)
+    "\u0370-\u03ff"  # Greek (LaTeX writes \alpha, the PDF writes the glyph)
+    "\u2200-\u22ff"  # Mathematical Operators
+    "]"
+)
+_LATEX = re.compile(r"\\[a-zA-Z]+\s*|\\[()\[\]]|[${}^_~]")
+
 
 def normalize_text(s: str) -> str:
-    """Shared normalisation so OCR scoring is not measuring punctuation style."""
+    """Shared normalisation so OCR scoring measures reading, not encoding."""
     s = unicodedata.normalize("NFKC", s).lower()
     s = re.sub(r"[‐-―]", "-", s)
+    s = _LATEX.sub(" ", s)  # drop LaTeX control sequences and math delimiters
+    s = _MATH_GLYPHS.sub(" ", s)  # drop symbols the two sides encode differently
     s = re.sub(r"[^\w\s.,;:%()\[\]/+=<>-]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
@@ -34,18 +56,35 @@ def ocr_f1(pred: str, gold: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
-def cer(pred: str, gold: str) -> float:
-    """Character error rate = edit distance / len(gold), the standard OCR number."""
-    a, b = normalize_text(pred), normalize_text(gold)
-    if not b:
-        return 0.0 if not a else 1.0
+def _edit_distance(a: Any, b: Any) -> int:
+    """Levenshtein distance, using the C implementation when it is installed.
+
+    Pure Python is O(len(a) x len(b)) interpreted, which on 2,500-character pages costs
+    seconds per comparison and makes the evidence notebook slow to re-run. The C library
+    is already a dependency (Nougat's post-processing needs it), so use it when present
+    and keep the fallback so the metric never depends on an optional package.
+    """
+    try:
+        import Levenshtein
+
+        return int(Levenshtein.distance(a, b))
+    except ImportError:
+        pass
     prev = list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
         cur = [i]
         for j, cb in enumerate(b, 1):
             cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
         prev = cur
-    return prev[-1] / len(b)
+    return prev[-1]
+
+
+def cer(pred: str, gold: str) -> float:
+    """Character error rate = edit distance / len(gold), the standard OCR number."""
+    a, b = normalize_text(pred), normalize_text(gold)
+    if not b:
+        return 0.0 if not a else 1.0
+    return _edit_distance(a, b) / len(b)
 
 
 def wer(pred: str, gold: str) -> float:
@@ -53,13 +92,7 @@ def wer(pred: str, gold: str) -> float:
     a, b = normalize_text(pred).split(), normalize_text(gold).split()
     if not b:
         return 0.0 if not a else 1.0
-    prev = list(range(len(b) + 1))
-    for i, wa in enumerate(a, 1):
-        cur = [i]
-        for j, wb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (wa != wb)))
-        prev = cur
-    return prev[-1] / len(b)
+    return _edit_distance(a, b) / len(b)
 
 
 def recall_at_k(retrieved: list, gold: list, k: int) -> float:

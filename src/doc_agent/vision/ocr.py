@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from ..contracts import *  # noqa
@@ -31,21 +30,33 @@ from .layout import REGION_META
 log = get_logger(__name__)
 
 
-def _looks_degenerate(text: str) -> bool:
-    """Nougat's known failure mode: it falls into a repetition loop on dense tables."""
-    if len(text) < 200:
-        return False
-    tail = text[-400:]
-    for n in (12, 25, 50):
-        chunk = tail[-n:]
-        if chunk and tail.count(chunk) >= 4:
-            return True
+def _repetition_cut(text: str, n: int = 8, max_repeats: int = 4) -> int | None:
+    """Index where a repeated n-gram takes over, or None if the text is healthy.
+
+    Nougat's documented failure is falling into a loop ("Let C be a finite graph and let
+    C be a finite graph. Let ..."). An earlier version of this check only inspected the
+    last 400 characters, which misses the common case where the loop starts near the top
+    of the page and runs the whole way down. This scans the whole page and returns the
+    position where the looping began, so the healthy prefix can be kept.
+    """
     words = text.split()
-    if len(words) > 60:
-        window = words[-60:]
-        if len(set(window)) <= 4:
-            return True
-    return False
+    if len(words) < n * 3:
+        return None
+    seen: dict[tuple[str, ...], int] = {}
+    counts: dict[tuple[str, ...], int] = {}
+    for i in range(len(words) - n + 1):
+        gram = tuple(words[i : i + n])
+        counts[gram] = counts.get(gram, 0) + 1
+        seen.setdefault(gram, i)
+        if counts[gram] > max_repeats:
+            # rebuild the character offset of the first occurrence of this n-gram
+            return len(" ".join(words[: seen[gram]]))
+    return None
+
+
+def _looks_degenerate(text: str) -> bool:
+    """True if the transcription collapsed into a repetition loop."""
+    return len(text) >= 200 and _repetition_cut(text) is not None
 
 
 class Reader:
@@ -169,10 +180,20 @@ class Reader:
         )
 
     def _guarded(self, text: str, what: str) -> str:
-        if self.cfg.get("repetition_guard", True) and _looks_degenerate(text):
-            log.warning("OCR degenerated into a repetition loop on %s; truncating", what)
-            return re.sub(r"\s+", " ", text[:1500]).strip()
-        return text
+        if not self.cfg.get("repetition_guard", True) or len(text) < 200:
+            return text
+        cut = _repetition_cut(text)
+        if cut is None:
+            return text
+        kept = text[:cut].strip()
+        log.warning(
+            "OCR degenerated into a repetition loop on %s; keeping the %d chars "
+            "before the loop, discarding %d",
+            what,
+            len(kept),
+            len(text) - len(kept),
+        )
+        return kept
 
 
 def _cache_path() -> str:
@@ -181,18 +202,33 @@ def _cache_path() -> str:
     return os.path.join(repo_root(), "data", "interim", "ocr_cache.jsonl")
 
 
-def _load_cache() -> dict[str, str]:
+def _load_cache(guard: bool = True) -> dict[str, str]:
+    """Read the resume cache, re-applying the repetition guard on the way in.
+
+    Guarding on read as well as on write makes the cache self-healing: a transcription
+    stored by an older, weaker guard is cleaned when it is next used, so a corpus that
+    took hours of GPU time does not have to be regenerated to benefit from a fix here.
+    """
     path = _cache_path()
     if not os.path.exists(path):
         return {}
     cache: dict[str, str] = {}
+    cleaned = 0
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             try:
                 row = json.loads(line)
-                cache[row["key"]] = row["text"]
+                text = row["text"]
             except (json.JSONDecodeError, KeyError):
                 continue  # a half-written line from a killed run; skip it
+            if guard and len(text) >= 200:
+                cut = _repetition_cut(text)
+                if cut is not None:
+                    text = text[:cut].strip()
+                    cleaned += 1
+            cache[row["key"]] = text
+    if cleaned:
+        log.info("ocr cache: repetition guard cleaned %d stored transcriptions", cleaned)
     return cache
 
 
