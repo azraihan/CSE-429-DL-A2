@@ -1,37 +1,3 @@
-# =============================================================================
-# File:     tests/test_structure.py
-# Layer:    Tests - STRUCTURE LOCK
-# Status:   ACTIVE - runs in CI and currently passes
-#
-# Purpose:
-#   The guard rail on the whole scaffold. CI fails if a required module,
-#   callable, class or signature drifts. It is deliberately strict: the value of
-#   a fixed skeleton is that every group's code is comparable and gradeable, and
-#   that guarantee only holds if renaming is caught mechanically.
-#
-# What it asserts:
-#   REQUIRED        the stage-by-stage symbols - pipeline entry points, all seven
-#                   contract models, enhancer, layout.detect, ocr.Reader/transcribe,
-#                   store.build/load, Retriever, Agent, tools.REGISTRY, Guardrails,
-#                   hitl.escalate, RLVR, metrics, serve.app, mlops.tracking
-#   test_agent_loop_signature
-#                   Agent.run takes exactly (self, query_text) - the loop's
-#                   interface may not be widened to smuggle state past the hooks
-#   test_tool_names_locked
-#                   the tool name set is exactly the nine in agent/tools.py
-#   REQUIRED_V2     the mandatory homes for settings, logging, LLM client/prompts/
-#                   postprocess, HITL store, LoRA/quantize, calibration, PII,
-#                   data versioning and validation
-#   REQUIRED_XCUT   every cross-cutting feature exposes register(), and wiring.py
-#                   exposes register_all() - i.e. each horizontal feature really
-#                   is attachable at a seam
-#   test_seams_are_locked
-#                   the nine hook seam names, exactly
-#
-# Note: these are EXISTENCE and SIGNATURE checks, not behaviour checks - they
-# pass against stubs. Behaviour is tests/test_crosscutting.py's job.
-# =============================================================================
-
 """STRUCTURE LOCK — CI fails if required modules/callables/signatures drift."""
 import importlib, inspect
 
