@@ -1,3 +1,41 @@
+# =============================================================================
+# File:     src/doc_agent/agent/tools.py
+# Stage:    6 - the tool interface
+# Status:   FIXED interface / STUB bodies - names and signatures are LOCKED
+#           (tests/test_structure.py and tests/test_tools.py assert the exact
+#           set of nine names and that each is a Tool subclass).
+#
+# Purpose:
+#   Everything the agent is allowed to do, expressed as one uniform interface.
+#   Tool.__call__ always returns a contracts.ToolResult(ok, payload), so the
+#   loop in agent.py can dispatch, log, guard and record any tool identically
+#   without knowing what it does.
+#
+# The nine tools:
+#   retrieve(query, k)            dense search (Stage 5). MUST return payload
+#                                 {"chunk_ids": [...], "top_score": <best score>,
+#                                 "k": k} - decide() branches on top_score and
+#                                 traces/run.jsonl reads it to prove the
+#                                 evidence-gated re-search actually happened.
+#   rerank(query, candidates)     cross-encoder reordering (retrieval/rerank.py)
+#   read_page(page_id)            fetch a full page's text - the multi-hop move
+#   enhance_page(page_id)         re-run restoration on a poor page (Stage 1)
+#   extract(field, chunk_id)      pull one structured field from evidence; this
+#                                 is the tool RLVR's verifiable reward scores
+#   aggregate(op, items)          count / sum / compare across extractions
+#   cite(chunk_id, span)          emit a contracts.Citation
+#   calculator(expr)              arithmetic, so numeric answers are computed
+#                                 rather than generated
+#   escalate_to_human(reason,     hand off to the HITL queue (agent/hitl.py)
+#                     context)
+#
+# REGISTRY:
+#   The list act() dispatches through. Adding a tool means adding it here AND
+#   updating the locked name set in tests/test_structure.py.
+#
+# TODO: every __call__ currently raises NotImplementedError.
+# =============================================================================
+
 """Stage 6 — FIXED tool interface — the agent's tools"""
 from __future__ import annotations
 from ..contracts import *  # noqa
