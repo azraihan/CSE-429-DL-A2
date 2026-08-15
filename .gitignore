@@ -8,3 +8,5 @@ data/index/
 data/corpus_version.json
 results/
 .DS_Store
+_.sh
+restore_locked_files.sh
