@@ -1,3 +1,68 @@
+# =============================================================================
+# File:     src/doc_agent/vision/ocr.py
+# Stage:    3 - OCR / HTR (baseline = pretrained foundation model)
+# Status:   IMPLEMENTED
+#
+# Reproduced published method:
+#   Nougat (Blecher et al., 2023, arXiv:2308.13418), run through HuggingFace
+#   `transformers` rather than the unmaintained `nougat-ocr` package.
+#
+# Why Nougat specifically:
+#   It is a document-understanding transformer trained on arXiv page images, so
+#   it emits Markdown with LaTeX for mathematics and resolves two-column reading
+#   order internally - the two properties this corpus turns on. A line-level
+#   recogniser such as TrOCR would need the layout stage to feed it correctly
+#   ordered lines and would still lose every equation.
+#
+# How Stages 2 and 3 divide the work:
+#   page prose            -> ONE full-page Nougat pass (its own reading-order
+#                            model does the work)
+#   figure/table region   -> a SEPARATE pass over the cropped region, so evidence
+#                            living inside a figure becomes its own retrievable
+#                            chunk instead of being flattened into surrounding
+#                            prose. 56.1% of this corpus's questions need that.
+#
+# Reliability machinery (the parts that make a multi-hour GPU run survivable):
+#   _repetition_cut()   Nougat's documented failure is looping ("Let C be a
+#                       finite graph and let C be a finite graph and ..."). This
+#                       scans the WHOLE page for an n-gram repeating past a
+#                       threshold and returns the character offset where the
+#                       loop began, so the healthy prefix is kept rather than
+#                       the page being discarded. An earlier version inspected
+#                       only the last 400 chars and missed loops starting high
+#                       on the page.
+#   Reader.batch_size() "auto" sizes from free VRAM (~6 GB per slot, capped at
+#                       32), so one config runs on a laptop card, a T4 and a
+#                       workstation GPU. Generation is the entire cost of this
+#                       stage; this single knob decides 20 minutes vs 3 hours.
+#   OCR cache           Every model call is written to data/interim/ocr_cache.jsonl
+#                       keyed by page/region, so a dropped Colab session or an
+#                       OOM resumes instead of restarting. _load_cache() re-applies
+#                       the repetition guard on READ, making the cache
+#                       self-healing: transcriptions stored under an older,
+#                       weaker guard get cleaned without regenerating the corpus.
+#                       Half-written lines from a killed run are skipped.
+#   OOM fallback        A batch that hits CUDA OOM is retried one image at a time
+#                       after emptying the cache, instead of failing the run.
+#   Version robustness  The image processor is called directly (the transformers
+#                       5.x NougatProcessor wrapper forwards None defaults into a
+#                       validated dataclass and dies), the model is cast to fp16
+#                       after loading rather than via a kwarg that is spelled
+#                       differently across generations, and post_process_generation
+#                       is treated as optional since newer tokenizer backends
+#                       dropped it.
+#
+# transcribe(regions, cfg) -> list[Chunk]
+#   Enumerates every unit of work, skips cache hits, generates in batches,
+#   flushes each result to the resume cache, then assembles chunks:
+#     "<page_id>#prose"                -> full page text
+#     "<page_id>#r<NN>:<kind>"         -> "[figure] ..." / "[table] ..." crops,
+#                                          numbered by REGION_META order
+#
+# Inputs  : list[Region], cfg["ocr"], PAGE_META, REGION_META
+# Outputs : list[Chunk] (one per page + one per figure/table region)
+# =============================================================================
+
 """Stage 3 — OCR/HTR (BASELINE = pretrained foundation, fine-tuned)
 
 REPRODUCED PUBLISHED METHOD: Nougat (Blecher et al., 2023, arXiv:2308.13418), run
