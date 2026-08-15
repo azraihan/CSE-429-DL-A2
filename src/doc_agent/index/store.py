@@ -1,3 +1,38 @@
+# =============================================================================
+# File:     src/doc_agent/index/store.py
+# Stage:    4 - vector store
+# Status:   IMPLEMENTED
+#
+# Purpose:
+#   Persists and reloads the searchable knowledge base: the FAISS vector index,
+#   the chunk texts it points at, and the metadata describing how it was built.
+#
+# index_dir() -> data/index/
+#   Deliberately NOT data/raw/ or data/interim/, both of which are gitignored.
+#   The built index is small enough to ship, so a grader can run the demo
+#   notebook without a GPU and without rebuilding the corpus.
+#
+# build(chunks, vectors, cfg) writes three files:
+#   index.faiss       IndexFlatIP by default. Flat is EXACT - at this corpus size
+#                     an approximate index would trade recall for a speedup we do
+#                     not need, and recall is what the NFR is about. HNSW is
+#                     available via cfg["index"]["type"] for scale experiments.
+#                     Inner product on normalised vectors = cosine similarity.
+#   chunks.jsonl      id, doc_id, text, page_ids per line - the row order matches
+#                     the FAISS vector order, which is how a search result index
+#                     becomes a Chunk again.
+#   index_meta.json   n_chunks, dim, index type, embedding model, chunk_tokens,
+#                     overlap, page/doc/word counts, index size on disk. This is
+#                     the provenance record that lets a reported metric be tied
+#                     back to the exact index that produced it.
+#
+# load(cfg) -> (faiss index, list[Chunk], meta dict)
+#   Raises a message naming scripts/build_index.sh when the index is missing,
+#   rather than a bare FileNotFoundError.
+#
+# Called by : pipeline.build_knowledge_base (build), retrieval.Retriever (load)
+# =============================================================================
+
 """Stage 4 — vector store"""
 
 from __future__ import annotations
