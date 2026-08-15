@@ -1,3 +1,36 @@
+# =============================================================================
+# File:     src/doc_agent/ingest/loader.py
+# Stage:    1 - load scanned page images
+# Status:   IMPLEMENTED
+#
+# Purpose:
+#   Turns the on-disk corpus produced by scripts/get_data.sh into the list[Page]
+#   the rest of the pipeline consumes, and caches everything else known about
+#   each page in a sidecar dictionary.
+#
+# Key objects:
+#   PAGE_META : dict[page_id -> row]
+#       contracts.Page is FIXED at (id, image_path, doc_id), so page number,
+#       width/height, split, word count and the absolute image path live here
+#       instead. Populated by load_pages() and read by preprocess, layout, ocr,
+#       validate and the eval code. It is module-level state: load_pages() must
+#       run before any consumer touches it, and it is cleared on every call so a
+#       second load never inherits stale rows.
+#   repo_root()   - absolute repo path, derived from __file__ (../../..), so
+#                   scripts and notebooks work from any working directory.
+#   corpus_dir()  - data/raw/, where the rendered corpus lives.
+#   load_qa()     - the benchmark's own questions, evidence page ids, normalised
+#                   boxes and strata; returns [] when absent so the layout stage
+#                   degrades to pure heuristics rather than crashing.
+#   load_pages()  - reads manifest.jsonl, honours cfg.ingest.limit_pages (fast
+#                   smoke runs) and cfg.ingest.splits (train/val/test isolation),
+#                   and raises a message naming get_data.sh when the manifest is
+#                   missing.
+#
+# Inputs  : data/raw/manifest.jsonl, data/raw/qa.jsonl, cfg["ingest"]
+# Outputs : list[Page], populated PAGE_META
+# =============================================================================
+
 """Stage 1 — load scanned page-images"""
 
 from __future__ import annotations
