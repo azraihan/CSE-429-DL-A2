@@ -8,7 +8,7 @@ Every number cited is measured; see `notebooks/eda.ipynb` and `notebooks/kb_demo
 | **0 Frame** | Answer a question from a scanned scientific page, grounded in that page. Pooled answer-F1 ≥ 0.70; robustness gate F1(S1)−F1(S3) ≤ 8 | SciEGQA-Bench, 80 docs / 1823 pages / 788k words | none | Three axes fixed in `task.yaml`; strata S1/S2/S3 derived from corpus annotations | `task.yaml` + `manifest.yaml` are the single source of the axes | axes asserted identical across task/manifest/form | n/a | corpus pinned to revision `9bdca77b` |
 | **1 Ingest** | Turn 80 PDFs into 300-DPI pages whose coordinates still match the corpus's boxes | `PDF.tar` (132 MB) at pinned rev; splits 70/15/15 **by document** | none — deterministic ops only | Render 300 DPI native size, greyscale, NFKC + math punctuation; **no deskew/denoise/binarize** | `get_data.sh` emits `manifest/qa/splits`; `load_pages()` is the only reader | geometry assertion per page; floors + leakage in `validate.py` | offline batch, once per corpus revision | `snapshot()` hashes manifest+qa+splits → corpus version id |
 | **2 Layout ▲E2** | Recover reading order and locate figure/table evidence | corpus `rel_bbox` + `subimg_type` as region labels | none learned — projection + morphology | Band-scan gutter detection → bands → left column, then right; annotated boxes spliced into the same order | `detect()` returns regions **in reading order**; that order is the contract | 8/8 agreement with eye-checked pages; overlays rendered | CPU, ~0.2 s/page | region provenance recorded in `REGION_META` |
-| **3 OCR** | Read prose and figure/table regions into text | rendered pages + region crops (8 px padding) | **`facebook/nougat-base`** — reproduced published method (Blecher et al. 2023) | Full-page pass for prose; separate pass per figure/table crop; fp16; batch auto-sized to VRAM; repetition guard | Two paths for the two evidence kinds; `Chunk.id` encodes page + region | per-page resume cache; batched output verified identical to batch-1 | GPU batch; ~20–40 min for 1823 pages at batch 16 | `ocr_cache.jsonl` keyed by page/region |
+| **3 OCR** | Read prose and figure/table regions into text | rendered pages + region crops (8 px padding) | **`facebook/nougat-base`** — reproduced published method (Blecher et al. 2023) | Full-page pass for prose; separate pass per figure/table crop; fp16; batch auto-sized to VRAM; repetition guard | Two paths for the two evidence kinds; `Chunk.id` encodes page + region | per-page resume cache; batched output verified identical to batch-1 | GPU batch; **4.5 h on a Kaggle T4 at batch 2** for 2,444 passes (1,823 pages + 621 region crops) | `ocr_cache.jsonl` keyed by page/region, 2,444 entries |
 | **4 Index** | Make regions searchable without losing which box they came from | chunks from Stage 3, PII-scrubbed | `BAAI/bge-base-en-v1.5` (768-d) | Region-aware chunking, split on Nougat's Markdown headings, 256 tokens / 32 overlap; normalised vectors | FAISS `IndexFlatIP` + `chunks.jsonl` + `index_meta.json` in `data/index/` | `embed.dim` asserted against the model's real output | offline batch; index ships in the repo so the demo runs without a GPU | index tagged with model, chunk params, corpus counts |
 | 5 Retrieval | A3 | | | | | | | |
 | 6 Agent | A3 | | | | | | | |
@@ -143,3 +143,47 @@ keep it out of the agent's reach, not to erase it.
 **Known limit.** A title line that carries the author's name alongside the title is
 kept, because dropping titles would cost real retrieval quality. Identifier redaction
 still applies to it.
+
+---
+
+## What the build actually produced (A2 results)
+
+Measured in `notebooks/kb_demo.ipynb`; every figure in the A2 form comes from there.
+
+| | |
+|---|---|
+| Corpus | 80 documents · 1,823 pages · 788,265 words |
+| OCR | 2,444 Nougat passes (1,823 pages + 621 region crops), 4.5 h on a Kaggle T4 |
+| Index | **5,240 chunks** (644 of them figure/table transcriptions) · 768-d · FAISS flat · 15.4 MB |
+| Coverage | 1,818 / 1,823 pages (99.7%), all 80 documents |
+| OCR quality | **token-F1 0.866**, CER 0.300 on 18 held-out pages — S1 0.763 · S2 0.892 · S3 0.943 |
+| Retrieval | R@1 0.353 · R@5 0.600 · R@10 0.667 over 150 sampled queries |
+
+Three results worth carrying into A3, none of them predicted in A1:
+
+**The region path is what answers figure questions.** On a 5-question S3 spot check every
+single top hit was a `#r*:figure` or `#r*:table` chunk, not page prose. Stage 2 → Stage 3's
+crop-and-reread path is doing the work our data speciality said it would.
+
+**Reading is hardest on mathematics, not on columns.** S3 reads *best* (0.943) and S1
+worst (0.763) — the opposite of A1's expectation. The S1 figure is dragged down almost
+entirely by one page where Nougat fell into a repetition loop; the difficulty is dense
+notation, not column count. Multi-column reading order is effectively solved by Nougat.
+
+**`weak_threshold` is mis-calibrated and would break the A3 gate.** Across 150 queries the
+top-1 similarity ranged 0.494–0.812 (mean 0.664); *none* fell below the configured 0.35, so
+evidence-gated re-search would never fire. And failed retrievals (0.494–0.741, median
+0.623) overlap the successful ones almost completely, so no absolute cut separates them.
+A3 must use a relative criterion — top-1 vs top-k margin, or the post-rerank score.
+
+## Known limits, stated rather than buried
+
+- The OCR oracle is **machine-extracted from the PDF text layer and human-reviewed**, not
+  hand-typed. Strong for prose; the maths required repairing truncated codepoints, and
+  table *structure* is not represented, so we score table content and not table layout.
+- Greek letters and math operators are excluded from the character metric because LaTeX
+  spells them as words and the PDF as glyphs. Math *variables* are scored.
+- The PII gate removed 5 pages (0.27%) from the index, costing 4 papers' titles.
+- The shipped index was built with the tail-based repetition guard; the stronger
+  whole-page guard landed afterwards and applies on cache reload, so any rebuild picks
+  it up. About 1% of pages triggered the guard during the build.

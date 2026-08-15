@@ -6,3 +6,5 @@ __pycache__/
 .venv/
 data/index/
 data/corpus_version.json
+results/
+.DS_Store
