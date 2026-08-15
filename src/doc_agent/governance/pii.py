@@ -1,3 +1,52 @@
+# =============================================================================
+# File:     src/doc_agent/governance/pii.py
+# Layer:    Cross-cutting - privacy (MANDATORY)
+# Status:   IMPLEMENTED
+#
+# The situation this addresses:
+#   Every paper in the corpus carries an author block naming living, identifiable
+#   researchers with affiliations, emails and sometimes ORCIDs; acknowledgements
+#   name more. This is public scholarly attribution, so the stored page images
+#   are NOT altered - but it is kept out of the agent's reach: identifiers are
+#   redacted from extracted text before indexing, and a chunk that is mostly
+#   personal identifiers is dropped entirely. The effect is that questions about
+#   PEOPLE rather than CONTENT retrieve nothing and the agent abstains.
+#
+# Detection:
+#   _PATTERNS  EMAIL, ORCID (the 4-4-4-3+check-digit form), URL_USER
+#              (github/linkedin profile links), PHONE
+#   _NAMEY     names introduced by an explicit role marker - "corresponding
+#              author: Jane Q. Doe", "contact: ..." - which is far more precise
+#              than trying to detect person names in running prose.
+#   detect(text) -> sorted [(start, end, type)] spans
+#
+# Redaction:
+#   redact(text)   replaces each span with a typed placeholder ([EMAIL], [ORCID],
+#                  [PERSON], ...). Overlapping matches keep the first, so the
+#                  output can never be corrupted by double substitution. Typed
+#                  placeholders preserve sentence structure, so a redacted chunk
+#                  still embeds and retrieves sensibly.
+#   is_mostly_identifiers(text)  the author-block test: short text where either
+#                  >12% of characters are detected identifiers, or the tokens are
+#                  overwhelmingly Capitalised with almost no lowercase connective
+#                  prose. Such a chunk is dropped rather than redacted, because a
+#                  chunk of pure placeholders is noise in the index.
+#
+# Wiring - register(hooks) attaches the same _scrub handler at three seams:
+#   AFTER_OCR      scrub extracted text BEFORE it is chunked, embedded and
+#                  indexed. Redacting only at answer time would leave PII
+#                  searchable in the vector store.
+#   BEFORE_ANSWER  scrub the outgoing answer text.
+#   ON_LOG         scrub log messages, so the audit trail is not itself a leak.
+#
+# Implementation gotcha:
+#   pipeline.py discards hooks.run()'s return value and passes the SAME list on
+#   to Stage 4, so dropping chunks has to be an IN-PLACE edit (chunks[:] = kept)
+#   to take effect. Rebinding ctx["chunks"] alone would silently do nothing.
+#
+# Verified by: tests/test_crosscutting.py::test_pii_never_leaks_to_answer_or_log
+# =============================================================================
+
 """Governance — PII detection + redaction (mandatory)
 
 Every paper carries an author block naming living, identifiable researchers, with
