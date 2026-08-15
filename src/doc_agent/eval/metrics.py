@@ -1,3 +1,45 @@
+# =============================================================================
+# File:     src/doc_agent/eval/metrics.py
+# Layer:    Stage 9 - metric definitions
+# Status:   PARTIAL - the OCR metrics are IMPLEMENTED; the retrieval, grounding,
+#           citation, calibration and fairness metrics are STUBS.
+#
+# normalize_text(s) - the most consequential function here.
+#   Shared normalisation so OCR scoring measures READING, not ENCODING. The
+#   reader emits LaTeX ("\(n\)", "\mathcal{C}") where the PDF text layer emits
+#   font-mapped Unicode, so control sequences are stripped and both sides are
+#   compared as text. Steps: NFKC fold, lowercase, unify dash variants, drop
+#   LaTeX control sequences and math delimiters, drop glyph classes the two sides
+#   encode differently, collapse whitespace.
+#   Math VARIABLES are deliberately still scored: the oracle repairs the PDF's
+#   truncated codepoints and NFKC folds mathematical-italic n to "n", while
+#   "\(n\)" reduces to "n" here, so the two sides agree. Greek letters and math
+#   operators stay EXCLUDED because LaTeX spells them as words ("\alpha") and the
+#   PDF as glyphs (α) - scoring those would measure notation, not accuracy. The
+#   remaining excluded ranges (CJK, Hangul, Private Use) are defensive, for pages
+#   whose font mapping is broken in a way the oracle did not repair.
+#
+# Implemented metrics:
+#   ocr_f1(pred, gold)  token-level F1 as a multiset intersection, so a repeated
+#                       word must be repeated the right number of times
+#   cer / wer           edit distance over characters / words, normalised by gold
+#                       length - the standard OCR numbers
+#   _edit_distance      uses the C `Levenshtein` implementation when installed
+#                       (already a dependency via Nougat post-processing) and
+#                       falls back to pure Python, so the metric never depends on
+#                       an optional package. Pure Python costs seconds per
+#                       2,500-character page, which made the evidence notebook
+#                       slow to re-run.
+#
+# Still to implement:
+#   recall_at_k(retrieved, gold, k)  retrieval quality  -> recall NFR
+#   groundedness(answer)             fraction of claims backed by evidence
+#                                    -> no-hallucination NFR
+#   citation_accuracy(answer)        do the citations point at the right spans
+#   ece(confidences, correct)        expected calibration error
+#   subgroup_gap(scores_by_group)    worst-group disparity -> fairness NFR
+# =============================================================================
+
 """Stage 9 — metrics"""
 
 from __future__ import annotations
