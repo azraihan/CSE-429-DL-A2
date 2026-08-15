@@ -4,3 +4,5 @@ data/interim/
 wandb/
 __pycache__/
 .venv/
+data/index/
+data/corpus_version.json

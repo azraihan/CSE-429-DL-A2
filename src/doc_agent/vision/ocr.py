@@ -114,7 +114,23 @@ class Reader:
                 bad_words_ids=[[self._proc.tokenizer.unk_token_id]],
             )
         decoded = self._proc.batch_decode(out, skip_special_tokens=True)
-        return [self._proc.post_process_generation(t, fix_markdown=False).strip() for t in decoded]
+        return [self._post_process(t) for t in decoded]
+
+    def _post_process(self, text: str) -> str:
+        """Nougat's own post-processing, where the installed transformers still has it.
+
+        It moved behind a tokenizer backend that dropped the method in newer releases
+        (`TokenizersBackend has no attribute post_process_generation`), so it is treated
+        as optional: it only tidies Markdown artifacts and trims repetitions, and our own
+        `_looks_degenerate` guard already covers the failure that actually matters.
+        """
+        fn = getattr(self._proc, "post_process_generation", None)
+        if fn is None:
+            return text.strip()
+        try:
+            return fn(text, fix_markdown=False).strip()
+        except (AttributeError, ImportError, TypeError):
+            return text.strip()
 
     def _run(self, image) -> str:  # type: ignore[no-untyped-def]
         return self._run_batch([image])[0]
