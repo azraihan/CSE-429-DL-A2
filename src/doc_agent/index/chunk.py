@@ -1,3 +1,39 @@
+# =============================================================================
+# File:     src/doc_agent/index/chunk.py
+# Stage:    4 - chunk text
+# Status:   IMPLEMENTED
+#
+# Purpose:
+#   Re-cuts Stage 3's page-level and region-level transcriptions into the units
+#   that actually get embedded and retrieved, sized by cfg["index"].
+#
+# The central design decision - REGION AWARENESS:
+#   A chunk never spans two layout regions. Fixed-size windows over a flattened
+#   page would re-mix the columns and glue table cells onto neighbouring prose,
+#   undoing the reading order Stage 2 just established. Keeping the region
+#   boundary is what makes a retrieved chunk citable back to one box on one page,
+#   which the citation and groundedness NFRs depend on. A figure or table
+#   transcription is treated as ONE indivisible piece of evidence (up to 2x the
+#   window size) rather than being split mid-caption.
+#
+# Helpers:
+#   _normalize()  NFKC plus the maths punctuation (minus sign, dashes, curly
+#                 quotes, multiplication sign, non-breaking space) that would
+#                 otherwise split a token in two and cost retrieval a match.
+#   _sections()   Splits page prose on Markdown headings. Nougat emits them, so
+#                 they are free semantic boundaries and a far better cut point
+#                 than a fixed window.
+#   _window()     Sliding word window with overlap, applied inside a section.
+#
+# split(chunks, cfg) -> list[Chunk]
+#   Ids are "<parent id>/c<NNN>", so a chunk's page, region and position remain
+#   readable straight from the id. doc_id and page_ids are inherited unchanged.
+#
+# Config   : cfg["index"] -> chunk_tokens (256), overlap (32), region_aware (True)
+# Inputs   : list[Chunk] from ocr.transcribe
+# Outputs  : list[Chunk], finer-grained, ready for embedding
+# =============================================================================
+
 """Stage 4 — chunk text"""
 
 from __future__ import annotations
