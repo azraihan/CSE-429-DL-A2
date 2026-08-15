@@ -1,3 +1,60 @@
+# =============================================================================
+# File:     src/doc_agent/vision/layout.py
+# Stage:    2 - layout detection / segmentation
+# Status:   IMPLEMENTED - the data-speciality enhancement (E2: multi-column and
+#           table/figure reading order)
+#
+# The problem this file exists to solve:
+#   On this corpus reading order is not visual order. 42.5% of pages are
+#   two-column, and 56.1% of questions have their evidence inside a figure or a
+#   table rather than in prose. A detector that returns an unordered pile of
+#   boxes is useless here - scrambled column order is precisely the failure
+#   mode. So detect() returns regions IN READING ORDER, and that list order is a
+#   contract every later stage relies on.
+#
+# Two region sources, merged:
+#   1. _evidence_boxes(cfg) - the corpus's own annotations from qa.jsonl. Boxes
+#      are stored normalised to a 1000x1000 grid, the only coordinate form that
+#      survives this corpus's mixed page geometry, and are scaled to pixels
+#      using PAGE_META width/height. Types map image->figure, table->table.
+#   2. A morphological block detector over the page image for everything else.
+#
+# The detection machinery:
+#   _gutter(binv)   Finds the vertical whitespace channel between columns with a
+#                   PROJECTION PROFILE, not morphology: the gutter is only ~12px
+#                   at working resolution, narrower than the kernel needed to
+#                   join words into lines, so any morphological pass bridges it
+#                   and welds the columns into one block. Scans horizontal bands
+#                   rather than the whole page, because a wide figure above two
+#                   columns closes the gutter in a whole-page projection and
+#                   hides the columns beneath it. Requires the gap to persist in
+#                   >=50% of text bands, so one coincidental gap is not enough.
+#   _blocks_in()    cv2 morphological closing (words->lines->blocks) restricted
+#                   to a single column strip, with minimum size filtering.
+#   _analyse()      Returns (blocks, gutter mid-x, bands) in FULL-RESOLUTION
+#                   coordinates. A "band" is a horizontal slice tagged with
+#                   whether its ink crosses the gutter - spanning bands hold
+#                   titles and wide figures, the rest hold two-column flow. The
+#                   span mask is cleaned by RUN LENGTH, not smoothing: a stray
+#                   descender must not promote a two-column band to full width,
+#                   and a blank line inside a figure must not split it.
+#   _overlap()      Fraction of box a covered by box b.
+#
+# detect(pages, cfg) - the one ordering rule:
+#   Detected blocks swallowed (>60%) by an annotated figure/table are dropped as
+#   that region's internals. Then EVERY region, annotated or detected, is sorted
+#   by (band index, column, y, x). Ordering the two sources separately is what
+#   puts a right-column figure ahead of a left-column one. Finally, short narrow
+#   text blocks are relabelled "heading".
+#
+# REGION_META : dict[(page_id, bbox) -> {order, source, column}]
+#   contracts.Region is FIXED at (page_id, bbox, kind), so reading-order index
+#   and provenance live here. ocr.py reads `order` to build stable region ids.
+#
+# Inputs  : list[Page], cfg["layout"], PAGE_META, qa.jsonl
+# Outputs : list[Region] in reading order, populated REGION_META
+# =============================================================================
+
 """Stage 2 — layout detection / segmentation
 
 DATA-SPECIALITY ENHANCEMENT (E2: multi-column / table-figure reading order).
